@@ -1,0 +1,112 @@
+<?xml version="1.0" encoding="UTF-8"?>
+
+<mule xmlns:email="http://www.mulesoft.org/schema/mule/email" xmlns:tls="http://www.mulesoft.org/schema/mule/tls"
+	xmlns:http="http://www.mulesoft.org/schema/mule/http"
+	xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core" xmlns="http://www.mulesoft.org/schema/mule/core" xmlns:doc="http://www.mulesoft.org/schema/mule/documentation" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+http://www.mulesoft.org/schema/mule/tls http://www.mulesoft.org/schema/mule/tls/current/mule-tls.xsd
+http://www.mulesoft.org/schema/mule/email http://www.mulesoft.org/schema/mule/email/current/mule-email.xsd">
+	<http:listener-config name="HTTP_Listener_config" doc:name="HTTP Listener config" doc:id="659bd002-183e-460c-8f66-ec62e58e5947" >
+		<http:listener-connection host="0.0.0.0" port="8081" />
+	</http:listener-config>
+	<configuration-properties doc:name="Configuration properties" doc:id="a38fe3f3-79d7-4971-b866-c8c35c215b9e" file="core.properties" />
+	<http:request-config name="HTTP_Request_configuration" doc:name="HTTP Request configuration" doc:id="59959c56-42c2-40ef-adea-bb6ade9b8b67" basePath="/api/v2/appointment/sessions/public/calendarByPin">
+		<http:request-connection host="https://cdn-api.co-vin.in" port="443" />
+	</http:request-config>
+	<email:smtp-config name="Email_SMTP" doc:name="Email SMTP" doc:id="d97eb13d-b6b3-42bf-ae5d-eef3eee4aef6" >
+		<email:smtp-connection host="smtp.gmail.com" port="587" user="emailparse66@gmail.com" password="emailparse123">
+			<email:properties >
+				<email:property key="mail.smtp.starttls.enable" value="true" />
+			</email:properties>
+		</email:smtp-connection>
+	</email:smtp-config>
+	<flow name="dw-testFlow" doc:id="f79be44f-f98a-4146-b277-ba1b2b7ad61e" >
+		<http:listener doc:name="Listener" doc:id="e9a07cd1-4a69-476e-b14a-f7534e2fd36c" config-ref="HTTP_Listener_config" path="/test"/>
+		<http:request method="GET" doc:name="Request" doc:id="a5839cd9-b297-4ba8-92f0-759564896441" config-ref="HTTP_Request_configuration" url="https://cdn-api.co-vin.in/api/v2/appointment/sessions/public/calendarByPin">
+			<http:query-params ><![CDATA[#[output application/java
+---
+{
+	"date" : "19-05-2021",
+	"pincode" : "110092"
+}]]]></http:query-params>
+		</http:request>
+		<ee:transform doc:name="Transform Message" doc:id="d53a99df-0f46-432c-b49b-6db5d70ebfc4" >
+			<ee:message >
+			</ee:message>
+			<ee:variables >
+				<ee:set-variable variableName="listOfCenters" ><![CDATA[%dw 2.0
+output application/java
+var listOfCenters = payload.centers map (center) -> {
+	centerId : center.center_id,
+	name : center.name,
+	address : center.address,
+	pincode : center.pincode,
+	feeType : center.fee_type,
+	fromDate : center.from,
+	toDate : center.to
+	
+	}
+---
+listOfCenters]]></ee:set-variable>
+				<ee:set-variable variableName="listOfSession" ><![CDATA[%dw 2.0
+output application/java
+var listOfSession = flatten (payload.centers map (center) -> 
+	(center.sessions map (session) -> {
+	centerId : center.center_id,
+	date : session.date,
+	vaccine : session.vaccine,
+	minAgeLimit : session.min_age_limit,
+	availableCapacity : session.available_capacity,
+	vaccineFee : if(center.fee_type == 'Paid') ((center.vaccine_fees filter($.vaccine == session.vaccine))[0].fee default "unknown") else 0
+	
+	}))
+---
+listOfSession]]></ee:set-variable>
+				<ee:set-variable variableName="listOfDates" ><![CDATA[%dw 2.0
+output application/java
+var numOfDays = p('number.of.days')
+
+var startDate = now()
+   
+---
+(0 to numOfDays) map (startDate + ("P$($$)D" as Period)) as String {format : 'dd-MM-yyyy'}]]></ee:set-variable>
+			</ee:variables>
+		</ee:transform>
+		<ee:transform doc:name="Transform Message" doc:id="18bac440-80fe-4c16-b37f-3c5272aba3e2" >
+			<ee:message >
+				<ee:set-payload ><![CDATA[%dw 2.0
+output application/json
+---
+joinBy(vars.listOfCenters map(center) -> (
+ 	'<tr> <th>' ++ center.name ++ '</th>' ++ joinBy((flatten  (vars.listOfDates map (date) -> do {
+ 		var reqSession = (vars.listOfSession filter($.centerId == center.centerId and $.date ==  (date as String {format : 'dd-MM-yyyy'})))[0]
+ 		---
+ 		"<td>" ++ (if(reqSession.availableCapacity != null)
+ 					reqSession.availableCapacity ++  " " ++
+ 					reqSession.vaccine ++ " " ++
+ 					reqSession.minAgeLimit ++ " " ++
+ 					(reqSession.fee default 0)
+ 					else "NA") ++ "</td>"
+ 	})), '') ++ '</tr>'
+ 	), '')
+ 	]]></ee:set-payload>
+			</ee:message>
+		</ee:transform>
+		<parse-template doc:name="Parse Template" doc:id="5634aee5-cb3e-42f5-8b0c-8d458a2b4e37" location="email.template" outputMimeType="text/html"/>
+		<logger level="INFO" doc:name="Logger" doc:id="41fb60c0-fb68-4e67-8c96-b59d9650443a" />
+		<flow-ref doc:name="Flow Reference" doc:id="2d46d838-7952-431d-8021-66c824d7b594" name="dw-testFlow1"/>
+	</flow>
+	<flow name="dw-testFlow1" doc:id="afd9b174-1ab7-4bae-99ac-a36a7df1388a" >
+		<scheduler doc:name="Scheduler" doc:id="f87366e7-cebf-4e51-9dd8-42baf4280ed9" >
+			<scheduling-strategy >
+				<fixed-frequency frequency="1" timeUnit="DAYS"/>
+			</scheduling-strategy>
+		</scheduler>
+		<email:send doc:name="Send" doc:id="c07193a5-5940-491f-8f49-8cfbc1b734fa" config-ref="Email_SMTP" fromAddress="emailparse66@gmail.com">
+			<email:to-addresses >
+				<email:to-address value="forapisample@gmail.com" />
+			</email:to-addresses>
+		</email:send>
+	</flow>
+</mule>

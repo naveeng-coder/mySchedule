@@ -1,0 +1,10 @@
+{
+  "sampleData": {
+    "130db348-49b7-431c-b25c-5ddad3de1c42": {
+      "payload": "sample_data/name.xml"
+    },
+    "378aa23a-e2fe-43b6-ac0f-9a9573e88235": {
+      "payload": "sample_data/defaultstringtype.json"
+    }
+  }
+}
